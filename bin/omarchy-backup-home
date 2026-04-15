@@ -1,0 +1,49 @@
+#!/bin/bash
+
+set -e
+
+BACKUP_DIR=${BACKUP_DIR:-"/run/media/$USER/backup"}  # Change to your backup location
+BACKUP_DATE=$(date +%Y%m%d_%H%M%S)
+BACKUP_NAME="omarchy-home-${BACKUP_DATE}"
+
+echo -e "\e[32mBackup home directory\e[0m"
+
+# Check if backup directory exists
+if [ ! -d "$BACKUP_DIR" ]; then
+    echo -e "\e[31mBackup directory $BACKUP_DIR does not exist!\e[0m"
+    echo "Please mount your backup drive or set BACKUP_DIR environment variable"
+    echo ""
+    echo "Example: BACKUP_DIR=/path/to/backup omarchy-backup-home"
+    exit 1
+fi
+
+# Check available space
+AVAILABLE_GB=$(df -BG "$BACKUP_DIR" | tail -1 | awk '{print $4}' | sed 's/G//')
+HOME_SIZE_GB=$(du -sh "$HOME" | awk '{print $1}' | sed 's/G//')
+
+echo "Available space in backup location: ${AVAILABLE_GB}GB"
+echo "Home directory size: ${HOME_SIZE_GB}"
+
+# Create backup using rsync
+echo "Creating incremental backup..."
+rsync -aAXv \
+    --delete \
+    --exclude='.cache' \
+    --exclude='.local/share/Trash' \
+    --exclude='.local/share/baloo' \
+    --exclude='.mozilla/firefox/*/Cache' \
+    --exclude='.config/chromium/*/Cache' \
+    --exclude='.config/BraveSoftware/*/Cache' \
+    --exclude='Downloads' \
+    --exclude='.local/share/nvim/lazy' \
+    --exclude='node_modules' \
+    --exclude='vendor' \
+    --link-dest="${BACKUP_DIR}/omarchy-home-latest" \
+    "$HOME/" \
+    "${BACKUP_DIR}/${BACKUP_NAME}/"
+
+# Update latest symlink
+ln -snf "${BACKUP_NAME}" "${BACKUP_DIR}/omarchy-home-latest"
+
+echo -e "\e[32m✓ Backup completed: ${BACKUP_DIR}/${BACKUP_NAME}\e[0m"
+echo -e "\e[32m✓ Latest symlink: ${BACKUP_DIR}/omarchy-home-latest\e[0m"

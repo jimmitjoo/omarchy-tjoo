@@ -1,0 +1,246 @@
+#!/usr/bin/env python3
+"""
+People Counter - Count people entering/leaving through a line.
+Uses YOLOv8 for detection and tracks direction of movement.
+
+Usage:
+    stream-count <video-url|file|0> [model] [output]
+
+Example:
+    stream-count 0                    # Webcam
+    stream-count rtsp://camera/stream # RTSP stream
+    stream-count video.mp4 yolov8m.pt output.mp4
+"""
+
+import argparse
+import sys
+from collections import defaultdict
+from dataclasses import dataclass, field
+from typing import Optional
+
+try:
+    import cv2
+    import numpy as np
+    from ultralytics import YOLO
+except ImportError as e:
+    print(f"Missing dependencies: {e}")
+    print("\nInstall with:")
+    print("  pip install ultralytics opencv-python numpy")
+    sys.exit(1)
+
+try:
+    import supervision as sv
+    HAS_SUPERVISION = True
+except ImportError:
+    HAS_SUPERVISION = False
+
+
+@dataclass
+class TrackedPerson:
+    """Track a person's movement across the line."""
+    positions: list = field(default_factory=list)
+    crossed: bool = False
+    direction: Optional[str] = None
+
+
+class PeopleCounter:
+    """Count people crossing a horizontal line."""
+
+    def __init__(self, model_path: str = "yolov8n.pt"):
+        print(f"Loading model: {model_path}")
+        self.model = YOLO(model_path)
+        self.tracks: dict[int, TrackedPerson] = defaultdict(TrackedPerson)
+        self.counts = {"in": 0, "out": 0}
+        self.line_y: Optional[int] = None
+        self.line_margin = 20  # Pixels above/below line to detect crossing
+
+        if HAS_SUPERVISION:
+            self.tracker = sv.ByteTrack()
+        else:
+            self.tracker = None
+            print("Note: supervision not installed, using basic tracking")
+
+    def _get_center(self, bbox: np.ndarray) -> tuple[int, int]:
+        """Get center point of bounding box."""
+        x1, y1, x2, y2 = bbox[:4]
+        return int((x1 + x2) / 2), int((y1 + y2) / 2)
+
+    def _check_crossing(self, track_id: int, center_y: int):
+        """Check if person crossed the counting line."""
+        person = self.tracks[track_id]
+        person.positions.append(center_y)
+
+        if len(person.positions) < 2 or person.crossed:
+            return
+
+        # Check if crossed the line
+        prev_y = person.positions[-2]
+        curr_y = center_y
+
+        if prev_y < self.line_y <= curr_y:
+            # Crossed downward (entering)
+            person.crossed = True
+            person.direction = "in"
+            self.counts["in"] += 1
+        elif prev_y > self.line_y >= curr_y:
+            # Crossed upward (exiting)
+            person.crossed = True
+            person.direction = "out"
+            self.counts["out"] += 1
+
+    def process_frame(self, frame: np.ndarray) -> np.ndarray:
+        """Process a single frame and return annotated version."""
+        if self.line_y is None:
+            self.line_y = frame.shape[0] // 2
+
+        # Detect people (class 0 in COCO = person)
+        results = self.model(frame, classes=[0], verbose=False)[0]
+
+        annotated = frame.copy()
+
+        if HAS_SUPERVISION and self.tracker:
+            # Use supervision for tracking
+            detections = sv.Detections.from_ultralytics(results)
+            detections = self.tracker.update_with_detections(detections)
+
+            for bbox, tracker_id in zip(detections.xyxy, detections.tracker_id):
+                if tracker_id is None:
+                    continue
+
+                center_x, center_y = self._get_center(bbox)
+                self._check_crossing(tracker_id, center_y)
+
+                # Draw bounding box
+                x1, y1, x2, y2 = map(int, bbox)
+                color = (0, 255, 0) if not self.tracks[tracker_id].crossed else (255, 0, 0)
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+                cv2.putText(annotated, f"ID:{tracker_id}", (x1, y1 - 10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        else:
+            # Basic detection without tracking
+            boxes = results.boxes
+            if boxes is not None:
+                for box in boxes:
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+        # Draw counting line
+        cv2.line(annotated, (0, self.line_y), (frame.shape[1], self.line_y), (0, 255, 255), 2)
+
+        # Draw counts
+        cv2.rectangle(annotated, (10, 10), (200, 80), (0, 0, 0), -1)
+        cv2.putText(annotated, f"In: {self.counts['in']}", (20, 40),
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        cv2.putText(annotated, f"Out: {self.counts['out']}", (20, 70),
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+        # Show total
+        total = self.counts['in'] - self.counts['out']
+        cv2.putText(annotated, f"Inside: {total}", (frame.shape[1] - 150, 40),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
+        return annotated
+
+    def run(self, source, output_path: Optional[str] = None):
+        """Run the counter on video source."""
+        # Handle webcam
+        if source == "0" or source == 0:
+            source = 0
+
+        cap = cv2.VideoCapture(source)
+
+        if not cap.isOpened():
+            print(f"Error: Could not open video source: {source}")
+            return
+
+        # Get video properties
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        print(f"Video: {width}x{height} @ {fps:.1f} FPS")
+        print(f"Counting line at y={height // 2}")
+        print("Press 'q' to quit, 'r' to reset counts, 'l' to adjust line")
+        print("")
+
+        # Setup video writer if output specified
+        writer = None
+        if output_path:
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+            print(f"Recording to: {output_path}")
+
+        frame_count = 0
+
+        try:
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    if source == 0:
+                        continue  # Webcam might drop frames
+                    break
+
+                frame_count += 1
+                annotated = self.process_frame(frame)
+
+                if writer:
+                    writer.write(annotated)
+
+                cv2.imshow("People Counter - Press 'q' to quit", annotated)
+
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q'):
+                    break
+                elif key == ord('r'):
+                    self.counts = {"in": 0, "out": 0}
+                    self.tracks.clear()
+                    print("Counts reset")
+                elif key == ord('l'):
+                    # Adjust line position with mouse
+                    print("Click to set new line position...")
+
+        except KeyboardInterrupt:
+            print("\nInterrupted")
+
+        finally:
+            cap.release()
+            if writer:
+                writer.release()
+            cv2.destroyAllWindows()
+
+        print("")
+        print("=" * 40)
+        print(f"Final Counts:")
+        print(f"  In:  {self.counts['in']}")
+        print(f"  Out: {self.counts['out']}")
+        print(f"  Net: {self.counts['in'] - self.counts['out']}")
+        print("=" * 40)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Count people entering/leaving through a line",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s --source 0                    # Webcam
+  %(prog)s --source rtsp://camera/stream # RTSP stream
+  %(prog)s --source video.mp4            # Video file
+  %(prog)s --source 0 --model yolov8m.pt # Use larger model
+  %(prog)s --source video.mp4 --output counted.mp4
+        """
+    )
+    parser.add_argument("--source", required=True,
+                        help="Video source (file path, URL, or 0 for webcam)")
+    parser.add_argument("--model", default="yolov8n.pt",
+                        help="YOLO model to use (default: yolov8n.pt)")
+    parser.add_argument("--output",
+                        help="Output video path (optional)")
+    args = parser.parse_args()
+
+    counter = PeopleCounter(args.model)
+    counter.run(args.source, args.output)
+
+
+if __name__ == "__main__":
+    main()

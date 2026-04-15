@@ -1,0 +1,25 @@
+#!/bin/bash
+# Set TablePlus theme based on current Omarchy theme
+
+TABLEPLUS_SETTINGS="$HOME/.tableplus/settings/settings.json"
+
+# Check if TablePlus is installed
+if [ ! -f "$TABLEPLUS_SETTINGS" ]; then
+  exit 0
+fi
+
+# Determine theme based on current Omarchy theme
+if [[ -f ~/.config/omarchy/current/theme/light.mode ]]; then
+  TABLEPLUS_THEME="tableplus-light"
+else
+  TABLEPLUS_THEME="tableplus-dark"
+fi
+
+# Update TablePlus settings.json
+if command -v jq &>/dev/null; then
+  # Use jq if available
+  jq --arg theme "$TABLEPLUS_THEME" '."color-scheme-id" = $theme' "$TABLEPLUS_SETTINGS" > "$TABLEPLUS_SETTINGS.tmp" && mv "$TABLEPLUS_SETTINGS.tmp" "$TABLEPLUS_SETTINGS"
+else
+  # Fallback to sed
+  sed -i "s/\"color-scheme-id\":\"[^\"]*\"/\"color-scheme-id\":\"$TABLEPLUS_THEME\"/" "$TABLEPLUS_SETTINGS"
+fi

@@ -1,0 +1,78 @@
+#!/bin/bash
+set -euo pipefail
+
+# Show system metrics trends
+# Usage: omarchy-metrics-show [hours]
+
+source "$OMARCHY_PATH/lib/helpers.sh"
+
+METRICS_FILE="$HOME/.local/share/omarchy/metrics/system.csv"
+HOURS="${1:-1}"
+
+if [[ ! -f "$METRICS_FILE" ]]; then
+  log_warning "No metrics data yet. Run: omarchy-metrics-collect"
+  log_info "To enable automatic collection, add to crontab:"
+  echo "  * * * * * $OMARCHY_PATH/bin/omarchy-metrics-collect"
+  exit 1
+fi
+
+# Calculate timestamp for X hours ago
+since=$(( $(date +%s) - (HOURS * 3600) ))
+
+echo ""
+log_info "System Metrics (last ${HOURS}h)"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# Get data from last X hours
+data=$(awk -F',' -v since="$since" 'NR>1 && $1 >= since {print}' "$METRICS_FILE")
+
+if [[ -z "$data" ]]; then
+  log_warning "No data for the last ${HOURS} hour(s)"
+  exit 0
+fi
+
+# Calculate averages
+avg_cpu_temp=$(echo "$data" | awk -F',' '{sum+=$2; count++} END {printf "%.1f", sum/count}')
+avg_cpu_usage=$(echo "$data" | awk -F',' '{sum+=$3; count++} END {printf "%.1f", sum/count}')
+avg_mem=$(echo "$data" | awk -F',' '{sum+=$4; count++} END {printf "%.1f", sum/count}')
+avg_disk=$(echo "$data" | awk -F',' '{sum+=$5; count++} END {printf "%.1f", sum/count}')
+avg_gpu_usage=$(echo "$data" | awk -F',' '{sum+=$6; count++} END {printf "%.1f", sum/count}')
+avg_gpu_temp=$(echo "$data" | awk -F',' '{sum+=$7; count++} END {printf "%.1f", sum/count}')
+
+# Calculate max values
+max_cpu_temp=$(echo "$data" | awk -F',' 'BEGIN{max=0} {if($2>max)max=$2} END{printf "%.1f", max}')
+max_cpu_usage=$(echo "$data" | awk -F',' 'BEGIN{max=0} {if($3>max)max=$3} END{printf "%.1f", max}')
+max_mem=$(echo "$data" | awk -F',' 'BEGIN{max=0} {if($4>max)max=$4} END{printf "%.1f", max}')
+max_gpu_usage=$(echo "$data" | awk -F',' 'BEGIN{max=0} {if($6>max)max=$6} END{printf "%.1f", max}')
+max_gpu_temp=$(echo "$data" | awk -F',' 'BEGIN{max=0} {if($7>max)max=$7} END{printf "%.1f", max}')
+
+# Display
+printf "%-15s %8s %8s\n" "" "Avg" "Max"
+echo "───────────────────────────────────────"
+printf "%-15s %7s°C %7s°C\n" "CPU Temp" "$avg_cpu_temp" "$max_cpu_temp"
+printf "%-15s %8s%% %8s%%\n" "CPU Usage" "$avg_cpu_usage" "$max_cpu_usage"
+printf "%-15s %8s%% %8s%%\n" "Memory" "$avg_mem" "$max_mem"
+printf "%-15s %8s%%\n" "Disk" "$avg_disk"
+
+if [[ "$avg_gpu_usage" != "0.0" ]]; then
+  echo "───────────────────────────────────────"
+  printf "%-15s %8s%% %8s%%\n" "GPU Usage" "$avg_gpu_usage" "$max_gpu_usage"
+  printf "%-15s %7s°C %7s°C\n" "GPU Temp" "$avg_gpu_temp" "$max_gpu_temp"
+fi
+
+echo ""
+
+# Data points
+count=$(echo "$data" | wc -l)
+log_info "Based on $count data points"
+
+# Warnings
+if (( $(echo "$max_cpu_temp > 80" | bc -l) )); then
+  log_warning "CPU reached ${max_cpu_temp}°C - check cooling"
+fi
+if (( $(echo "$max_mem > 90" | bc -l) )); then
+  log_warning "Memory reached ${max_mem}% - consider closing apps"
+fi
+if (( $(echo "$max_gpu_temp > 85" | bc -l) )); then
+  log_warning "GPU reached ${max_gpu_temp}°C - check airflow"
+fi

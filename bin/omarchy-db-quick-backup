@@ -1,0 +1,17 @@
+#!/bin/bash
+# omarchy-db-quick-backup - Quick database backup without prompts
+# Backs up the hylde production database with timestamp
+
+set -e
+
+echo "⚡ Quick backup starting..."
+
+# Run the backup_hylde alias function
+backup_hylde
+
+if [ $? -eq 0 ]; then
+    echo "✅ Quick backup complete!"
+else
+    echo "❌ Backup failed!"
+    exit 1
+fi

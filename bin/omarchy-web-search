@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""
+Web search with page crawling for omarchy q -w command.
+Fetches search results AND crawls actual page content.
+"""
+
+import sys
+import json
+import subprocess
+import urllib.request
+import urllib.error
+import re
+import html
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Optional
+
+# Try to import html2text, fall back to basic HTML stripping
+try:
+    import html2text
+    H2T = html2text.HTML2Text()
+    H2T.ignore_links = True
+    H2T.ignore_images = True
+    H2T.ignore_emphasis = True
+    H2T.body_width = 0
+    HAS_HTML2TEXT = True
+except ImportError:
+    HAS_HTML2TEXT = False
+
+
+def strip_html_basic(html_content: str) -> str:
+    """Basic HTML to text conversion without dependencies."""
+    # Remove script and style elements
+    text = re.sub(r'<script[^>]*>.*?</script>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    # Remove HTML tags
+    text = re.sub(r'<[^>]+>', ' ', text)
+    # Decode HTML entities
+    text = html.unescape(text)
+    # Clean up whitespace
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+
+def html_to_text(html_content: str) -> str:
+    """Convert HTML to readable text."""
+    if HAS_HTML2TEXT:
+        return H2T.handle(html_content)
+    return strip_html_basic(html_content)
+
+
+def fetch_url(url: str, timeout: int = 10) -> Optional[str]:
+    """Fetch a URL and return its text content."""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'sv-SE,sv;q=0.9,en-US;q=0.8,en;q=0.7',
+        }
+        request = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            # Only process HTML
+            content_type = response.headers.get('Content-Type', '')
+            if 'text/html' not in content_type and 'application/xhtml' not in content_type:
+                return None
+
+            html_content = response.read().decode('utf-8', errors='ignore')
+            text = html_to_text(html_content)
+
+            # Limit content length
+            if len(text) > 4000:
+                text = text[:4000] + "..."
+
+            return text
+    except Exception as e:
+        return None
+
+
+def get_ddgr_results(query: str, num_results: int = 5) -> list[dict]:
+    """Get search results from ddgr in JSON format."""
+    try:
+        result = subprocess.run(
+            ['ddgr', '--np', '-n', str(num_results), '--json', query],
+            capture_output=True,
+            text=True,
+            timeout=15
+        )
+        if result.returncode == 0 and result.stdout:
+            return json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+        pass
+    return []
+
+
+def search_and_crawl(query: str, num_results: int = 3, crawl: bool = True) -> str:
+    """
+    Search the web and optionally crawl the top results.
+
+    Args:
+        query: Search query
+        num_results: Number of results to fetch
+        crawl: Whether to fetch actual page content
+
+    Returns:
+        Formatted string with search results and page content
+    """
+    print("🔍 Söker...", file=sys.stderr)
+    results = get_ddgr_results(query, num_results)
+
+    if not results:
+        return ""
+
+    output_parts = []
+
+    if crawl:
+        print(f"📄 Hämtar innehåll från {len(results)} sidor...", file=sys.stderr)
+
+        # Fetch pages in parallel
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            future_to_result = {
+                executor.submit(fetch_url, r.get('url', '')): r
+                for r in results if r.get('url')
+            }
+
+            for future in as_completed(future_to_result, timeout=20):
+                result = future_to_result[future]
+                url = result.get('url', '')
+                title = result.get('title', '')
+                abstract = result.get('abstract', '')
+
+                try:
+                    page_content = future.result()
+                except Exception:
+                    page_content = None
+
+                output_parts.append(f"### {title}")
+                output_parts.append(f"URL: {url}")
+
+                if page_content:
+                    # Clean up and truncate content
+                    content = page_content.strip()
+                    # Remove excessive newlines
+                    content = re.sub(r'\n{3,}', '\n\n', content)
+                    output_parts.append(f"\nContent:\n{content}")
+                else:
+                    output_parts.append(f"\nSnippet: {abstract}")
+
+                output_parts.append("")  # Empty line between results
+    else:
+        # Just return snippets
+        for r in results:
+            output_parts.append(f"### {r.get('title', '')}")
+            output_parts.append(f"URL: {r.get('url', '')}")
+            output_parts.append(f"Snippet: {r.get('abstract', '')}")
+            output_parts.append("")
+
+    return "\n".join(output_parts)
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Web search with page crawling')
+    parser.add_argument('query', nargs='+', help='Search query')
+    parser.add_argument('-n', '--num', type=int, default=3, help='Number of results (default: 3)')
+    parser.add_argument('--no-crawl', action='store_true', help='Only get snippets, no page content')
+
+    args = parser.parse_args()
+    query = ' '.join(args.query)
+
+    result = search_and_crawl(query, args.num, crawl=not args.no_crawl)
+    print(result)
+
+
+if __name__ == '__main__':
+    main()

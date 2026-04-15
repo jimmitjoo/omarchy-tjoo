@@ -1,0 +1,36 @@
+#!/bin/bash
+# omarchy-laravel-project - Quick Laravel project setup with Sail and VSCodium
+# Usage: omarchy-laravel-project <project-name>
+
+set -e
+
+if [ -z "$1" ]; then
+    echo "Usage: omarchy-laravel-project <project-name>"
+    exit 1
+fi
+
+PROJECT_NAME="$1"
+
+echo "🚀 Creating new Laravel project: $PROJECT_NAME"
+
+# Create Laravel project with Sail
+laravel new "$PROJECT_NAME" --sail --git
+
+# Navigate to project
+cd "$PROJECT_NAME" || exit 1
+
+echo "🐳 Starting Docker containers..."
+./vendor/bin/sail up -d
+
+echo "📝 Opening project in VSCodium..."
+codium .
+
+echo "✅ Project setup complete!"
+echo ""
+echo "Project: $PROJECT_NAME"
+echo "URL: http://localhost"
+echo ""
+echo "Useful commands:"
+echo "  ./vendor/bin/sail artisan    - Run artisan commands"
+echo "  ./vendor/bin/sail down       - Stop containers"
+echo "  ./vendor/bin/sail shell      - Enter container shell"

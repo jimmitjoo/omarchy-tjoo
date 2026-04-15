@@ -1,0 +1,95 @@
+#!/bin/bash
+set -euo pipefail
+
+# Show ML training metrics and statistics
+# Usage: omarchy-ml-metrics-show [hours]
+
+source "$OMARCHY_PATH/lib/helpers.sh" 2>/dev/null || {
+  log_info() { echo "[INFO] $*"; }
+  log_warning() { echo "[WARN] $*"; }
+}
+
+ML_METRICS_FILE="$HOME/.local/share/omarchy/metrics/ml-training.csv"
+HOURS="${1:-24}"
+
+if [[ ! -f "$ML_METRICS_FILE" ]]; then
+  log_warning "No ML metrics data yet."
+  echo ""
+  echo "To enable ML metrics collection, add to crontab:"
+  echo "  crontab -e"
+  echo "  * * * * * $OMARCHY_PATH/bin/omarchy-ml-metrics-collect"
+  exit 1
+fi
+
+since=$(( $(date +%s) - (HOURS * 3600) ))
+
+echo ""
+log_info "ML Training Metrics (last ${HOURS}h)"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# Get data from last X hours
+data=$(awk -F',' -v since="$since" 'NR>1 && $1 >= since {print}' "$ML_METRICS_FILE")
+
+if [[ -z "$data" ]]; then
+  log_warning "No data for the last ${HOURS} hour(s)"
+  exit 0
+fi
+
+# Calculate GPU stats
+avg_mem=$(echo "$data" | awk -F',' '{sum+=$2; count++} END {printf "%.0f", count>0 ? sum/count : 0}')
+max_mem=$(echo "$data" | awk -F',' 'BEGIN{max=0} {if($2>max)max=$2} END{printf "%.0f", max}')
+total_mem=$(echo "$data" | head -1 | cut -d',' -f3)
+
+avg_util=$(echo "$data" | awk -F',' '{sum+=$4; count++} END {printf "%.1f", count>0 ? sum/count : 0}')
+max_util=$(echo "$data" | awk -F',' 'BEGIN{max=0} {if($4>max)max=$4} END{printf "%.1f", max}')
+
+avg_power=$(echo "$data" | awk -F',' '{sum+=$5; count++} END {printf "%.1f", count>0 ? sum/count : 0}')
+max_power=$(echo "$data" | awk -F',' 'BEGIN{max=0} {if($5>max)max=$5} END{printf "%.1f", max}')
+
+avg_temp=$(echo "$data" | awk -F',' '{sum+=$6; count++} END {printf "%.1f", count>0 ? sum/count : 0}')
+max_temp=$(echo "$data" | awk -F',' 'BEGIN{max=0} {if($6>max)max=$6} END{printf "%.1f", max}')
+
+# Training time calculation
+total_training_min=$(echo "$data" | awk -F',' '$7==1 {count++} END {print count+0}')
+training_hours=$(echo "scale=1; $total_training_min / 60" | bc 2>/dev/null || echo "0")
+
+# Display stats
+printf "\n%-22s %10s %10s\n" "" "Average" "Peak"
+echo "─────────────────────────────────────────────"
+printf "%-22s %9sMB %9sMB\n" "GPU Memory" "$avg_mem" "$max_mem"
+printf "%-22s %9s%% %9s%%\n" "GPU Utilization" "$avg_util" "$max_util"
+printf "%-22s %9sW %9sW\n" "Power Draw" "$avg_power" "$max_power"
+printf "%-22s %8s°C %8s°C\n" "Temperature" "$avg_temp" "$max_temp"
+echo "─────────────────────────────────────────────"
+printf "%-22s %10sh\n" "Total Training Time" "$training_hours"
+echo ""
+
+# Energy cost estimate (Sweden average: ~1.5 SEK/kWh)
+if command -v bc &>/dev/null; then
+  energy_kwh=$(echo "scale=3; $avg_power * $total_training_min / 60 / 1000" | bc 2>/dev/null || echo "0")
+  cost_sek=$(echo "scale=2; $energy_kwh * 1.5" | bc 2>/dev/null || echo "0")
+
+  if [[ "$energy_kwh" != "0" ]]; then
+    echo "Energy Consumption"
+    echo "─────────────────────────────────────────────"
+    printf "%-22s %10.3f kWh\n" "Total Energy" "$energy_kwh"
+    printf "%-22s %10.2f SEK\n" "Est. Cost (~1.5 SEK/kWh)" "$cost_sek"
+    echo ""
+  fi
+fi
+
+# Data points
+count=$(echo "$data" | wc -l)
+log_info "Based on $count data points"
+
+# Warnings
+if command -v bc &>/dev/null; then
+  if (( $(echo "$max_temp > 85" | bc -l 2>/dev/null || echo 0) )); then
+    log_warning "GPU reached ${max_temp}°C - check cooling"
+  fi
+  if (( $(echo "$max_mem > $((total_mem * 95 / 100))" | bc -l 2>/dev/null || echo 0) )); then
+    log_warning "GPU memory nearly full - reduce batch size"
+  fi
+fi
+
+echo ""

@@ -1,0 +1,92 @@
+#!/bin/bash
+
+set -e
+
+echo -e "\e[32m=== Pre-Update Backup Checklist ===\e[0m"
+echo ""
+
+# 1. Check snapper is working
+if command -v snapper &>/dev/null; then
+    echo -e "\e[32m✓ Snapper is installed\e[0m"
+
+    # Check if configs exist
+    if sudo snapper list-configs 2>/dev/null | grep -q "root"; then
+        echo -e "\e[32m✓ Snapper 'root' config found\e[0m"
+    else
+        echo -e "\e[31m✗ Snapper 'root' config NOT found!\e[0m"
+    fi
+
+    if sudo snapper list-configs 2>/dev/null | grep -q "home"; then
+        echo -e "\e[32m✓ Snapper 'home' config found\e[0m"
+    else
+        echo -e "\e[31m✗ Snapper 'home' config NOT found!\e[0m"
+    fi
+else
+    echo -e "\e[31m✗ Snapper is NOT installed!\e[0m"
+    exit 1
+fi
+
+echo ""
+
+# 2. Check available disk space
+AVAILABLE=$(df -BG / | tail -1 | awk '{print $4}' | sed 's/G//')
+if [ "$AVAILABLE" -lt 50 ]; then
+    echo -e "\e[31m⚠ Low disk space: ${AVAILABLE}GB available (recommended: >50GB)\e[0m"
+    echo ""
+    read -p "Continue anyway? (y/N) " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
+else
+    echo -e "\e[32m✓ Sufficient disk space: ${AVAILABLE}GB available\e[0m"
+fi
+
+echo ""
+
+# 3. Check snap-pac is installed
+if pacman -Q snap-pac &>/dev/null; then
+    echo -e "\e[32m✓ snap-pac is installed (automatic pacman snapshots)\e[0m"
+else
+    echo -e "\e[33m⚠ snap-pac is NOT installed (no automatic pacman snapshots)\e[0m"
+fi
+
+echo ""
+
+# 4. Push Omarchy changes to git
+if [ -d "$HOME/.local/share/omarchy/.git" ]; then
+    cd "$HOME/.local/share/omarchy"
+
+    if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+        echo -e "\e[33m⚠ Uncommitted changes in Omarchy config\e[0m"
+        echo ""
+        read -p "Commit and push changes? (y/N) " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            git add -A
+            git commit -m "Pre-update backup: $(date +%Y-%m-%d\ %H:%M:%S)" || true
+            git push personal master 2>&1 || echo -e "\e[31m✗ Failed to push to remote\e[0m"
+        fi
+    else
+        echo -e "\e[32m✓ Omarchy config is clean (no uncommitted changes)\e[0m"
+    fi
+
+    # Check if we're ahead of remote
+    LOCAL=$(git rev-parse @)
+    REMOTE=$(git rev-parse @{u} 2>/dev/null || echo "")
+
+    if [ -n "$REMOTE" ] && [ "$LOCAL" != "$REMOTE" ]; then
+        echo -e "\e[33m⚠ Local commits not pushed to remote\e[0m"
+        read -p "Push to remote? (y/N) " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            git push personal master 2>&1 || echo -e "\e[31m✗ Failed to push to remote\e[0m"
+        fi
+    else
+        echo -e "\e[32m✓ Omarchy config synced with remote\e[0m"
+    fi
+fi
+
+echo ""
+echo -e "\e[32m=== Pre-Update Backup Checklist Complete ===\e[0m"
+echo ""

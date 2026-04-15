@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+*.egg
+venv/
+.venv/
+
+# ML artifacts
+*.pt
+*.pth
+*.onnx
+*.h5
+*.pkl
+*.joblib
+runs/
+checkpoints/
+*.weights
+wandb/
+
+# Data (use DVC for large files)
+data/raw/
+data/processed/
+*.mp4
+*.avi
+*.mov
+*.csv
+*.parquet
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local

@@ -1,0 +1,41 @@
+#!/bin/bash
+# omarchy-db-refresh - Combined backup, import, and migrate workflow
+# This is specifically for the hylde project workflow
+
+set -e
+
+echo "🔄 Starting database refresh workflow..."
+
+# Step 1: Backup production database
+echo ""
+echo "📥 Step 1/3: Backing up production database..."
+backup_hylde
+
+if [ $? -ne 0 ]; then
+    echo "❌ Backup failed! Aborting."
+    exit 1
+fi
+
+# Step 2: Import latest backup to local database
+echo ""
+echo "📦 Step 2/3: Importing backup to local database..."
+import_hylde
+
+if [ $? -ne 0 ]; then
+    echo "❌ Import failed! Aborting."
+    exit 1
+fi
+
+# Step 3: Run fresh migrations if in Laravel project
+echo ""
+if [ -f "artisan" ]; then
+    echo "🗄️  Step 3/3: Running fresh migrations with seeding..."
+    php artisan migrate:fresh --seed
+    echo "✅ Database refresh complete!"
+else
+    echo "⏭️  Step 3/3: Not in Laravel project, skipping migrations"
+    echo "✅ Database import complete!"
+fi
+
+echo ""
+echo "🎉 Workflow complete! Your local database is now synced with production."

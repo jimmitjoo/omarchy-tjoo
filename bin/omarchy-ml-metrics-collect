@@ -1,0 +1,65 @@
+#!/bin/bash
+set -euo pipefail
+
+# Extended ML metrics collection
+# Tracks GPU memory, power, training duration
+# Run via cron: * * * * * ~/.local/share/omarchy/bin/omarchy-ml-metrics-collect
+
+METRICS_DIR="$HOME/.local/share/omarchy/metrics"
+ML_METRICS_FILE="$METRICS_DIR/ml-training.csv"
+TRAINING_STATE_FILE="$METRICS_DIR/.training-state"
+
+mkdir -p "$METRICS_DIR"
+
+# Create header if file doesn't exist
+if [[ ! -f "$ML_METRICS_FILE" ]]; then
+  echo "timestamp,gpu_mem_used_mb,gpu_mem_total_mb,gpu_util_pct,gpu_power_w,gpu_temp_c,training_active,training_duration_min,process_name" > "$ML_METRICS_FILE"
+fi
+
+timestamp=$(date +%s)
+
+# GPU metrics
+if command -v nvidia-smi &>/dev/null; then
+  gpu_data=$(nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu,power.draw,temperature.gpu --format=csv,noheader,nounits 2>/dev/null || echo "0,0,0,0,0")
+  gpu_mem_used=$(echo "$gpu_data" | cut -d',' -f1 | tr -d ' ')
+  gpu_mem_total=$(echo "$gpu_data" | cut -d',' -f2 | tr -d ' ')
+  gpu_util=$(echo "$gpu_data" | cut -d',' -f3 | tr -d ' ')
+  gpu_power=$(echo "$gpu_data" | cut -d',' -f4 | tr -d ' ')
+  gpu_temp=$(echo "$gpu_data" | cut -d',' -f5 | tr -d ' ')
+else
+  gpu_mem_used=0
+  gpu_mem_total=0
+  gpu_util=0
+  gpu_power=0
+  gpu_temp=0
+fi
+
+# Training state detection
+training_active=0
+training_duration=0
+process_name=""
+
+# Check for active training processes (Python with common ML patterns)
+training_pid=$(pgrep -f "python.*train" 2>/dev/null | head -1 || true)
+
+if [[ -n "$training_pid" ]]; then
+  training_active=1
+  process_name=$(ps -p "$training_pid" -o comm= 2>/dev/null || echo "python")
+
+  # Track training duration
+  if [[ -f "$TRAINING_STATE_FILE" ]]; then
+    training_start=$(cat "$TRAINING_STATE_FILE")
+    training_duration=$(( (timestamp - training_start) / 60 ))
+  else
+    echo "$timestamp" > "$TRAINING_STATE_FILE"
+  fi
+else
+  # Clear training state when no training is running
+  rm -f "$TRAINING_STATE_FILE"
+fi
+
+# Append to CSV
+echo "$timestamp,$gpu_mem_used,$gpu_mem_total,$gpu_util,$gpu_power,$gpu_temp,$training_active,$training_duration,$process_name" >> "$ML_METRICS_FILE"
+
+# Keep only last 30 days of data (43200 minutes)
+tail -n 43201 "$ML_METRICS_FILE" > "$ML_METRICS_FILE.tmp" && mv "$ML_METRICS_FILE.tmp" "$ML_METRICS_FILE"

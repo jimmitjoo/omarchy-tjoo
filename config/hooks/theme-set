@@ -1,0 +1,24 @@
+#!/bin/bash
+set -euo pipefail
+
+# Hook that runs when theme is changed
+# Updates TablePlus theme automatically
+
+# Update TablePlus color scheme
+omarchy-theme-set-tableplus
+
+# Theme-specific waybar config (DHH-approved: symlinks, not copies)
+THEME_WAYBAR="$OMARCHY_PATH/themes/$1/waybar"
+
+if [[ -d "$THEME_WAYBAR" ]]; then
+  # Theme has custom waybar - use symlinks
+  ln -sf "$THEME_WAYBAR/config.jsonc" ~/.config/waybar/config.jsonc
+  ln -sf "$THEME_WAYBAR/style.css" ~/.config/waybar/style.css
+  omarchy-restart-waybar
+elif [[ -L ~/.config/waybar/config.jsonc ]]; then
+  # Switching to theme without custom waybar - restore defaults
+  rm -f ~/.config/waybar/config.jsonc ~/.config/waybar/style.css
+  cp "$OMARCHY_PATH/config/waybar/config.jsonc" ~/.config/waybar/config.jsonc
+  cp "$OMARCHY_PATH/config/waybar/style.css" ~/.config/waybar/style.css
+  omarchy-restart-waybar
+fi

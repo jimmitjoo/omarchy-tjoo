@@ -1,0 +1,74 @@
+# Personal packages installed by jimmitjoo
+# These are not part of the default Omarchy installation
+
+# Development tools
+claude-code
+composer
+mariadb
+php
+php-gd
+php-intl
+php-imagick
+php-redis
+php-sqlite
+rust
+vscodium-bin
+xdebug
+
+# API & HTTP tools
+bruno-bin
+httpie
+
+# Git tools
+git-delta
+lazygit
+
+# Node.js & Frontend
+nodejs
+npm
+pnpm
+
+# Fonts
+ttf-firacode-nerd
+
+# Terminal
+kitty
+
+# Productivity & Shell tools
+bat
+eza
+fzf
+starship
+zsh
+zsh-autosuggestions
+zsh-syntax-highlighting
+ddgr
+
+# Elephant plugins (app launcher plugins)
+elephant
+elephant-bluetooth
+elephant-calc
+elephant-clipboard
+elephant-desktopapplications
+elephant-files
+elephant-menus
+elephant-providerlist
+elephant-runner
+elephant-symbols
+elephant-todo
+elephant-unicode
+elephant-websearch
+
+# LibreOffice (fresh version instead of still)
+libreoffice-fresh
+
+# Communication
+slack-desktop-wayland
+
+# Media
+mpv
+
+# Backup and snapshot tools
+snap-pac
+grub-btrfs
+inotify-tools

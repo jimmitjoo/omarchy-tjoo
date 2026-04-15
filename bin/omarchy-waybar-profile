@@ -1,0 +1,35 @@
+#!/bin/bash
+set -euo pipefail
+
+# Switch between waybar profiles (minimal/developer)
+# Usage: omarchy-waybar-profile [minimal|developer]
+
+PROFILE="${1:-}"
+THEME_DIR="$OMARCHY_PATH/themes/jimmitjoo-gruvbox/waybar"
+PROFILES_DIR="$THEME_DIR/profiles"
+
+if [[ -z "$PROFILE" ]]; then
+  # Show current profile and available options
+  current=$(basename "$(readlink -f ~/.config/waybar/config.jsonc)" .jsonc 2>/dev/null || echo "unknown")
+  echo "Current profile: $current"
+  echo "Available: minimal, developer"
+  exit 0
+fi
+
+case "$PROFILE" in
+  minimal|developer)
+    if [[ -f "$PROFILES_DIR/$PROFILE.jsonc" ]]; then
+      ln -sf "$PROFILES_DIR/$PROFILE.jsonc" ~/.config/waybar/config.jsonc
+      omarchy-restart-waybar
+      echo "Switched to $PROFILE profile"
+    else
+      echo "Profile not found: $PROFILES_DIR/$PROFILE.jsonc"
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Unknown profile: $PROFILE"
+    echo "Available: minimal, developer"
+    exit 1
+    ;;
+esac
